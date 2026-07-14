@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cyber Hunter: Forest Survival Pro</title>
+    <!-- Tailwind CSS untuk UI Modern -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons untuk Ikon Menarik -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            touch-action: none;
+            user-select: none;
+        }
+        canvas {
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans flex flex-col h-screen overflow-hidden justify-center items-center p-2">
+
+    <!-- Kontainer Utama Game -->
+    <div class="relative w-full max-w-md aspect-[3/4] bg-slate-900 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl flex flex-col">
+        
+        <!-- Header / Dashboard Skor -->
+        <div class="absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-slate-950/90 to-transparent z-10 flex justify-between items-center pointer-events-none">
+            <div class="flex items-center gap-2 bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-full border border-slate-700/50">
+                <i data-lucide="crosshair" class="w-4 h-4 text-cyan-400"></i>
+                <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Skor:</span>
+                <span id="ui-score" class="text-xs font-bold text-cyan-400">0</span>
+            </div>
+            <div class="flex items-center gap-2 bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-full border border-slate-700/50">
+                <i data-lucide="heart" class="w-4 h-4 text-rose-500 animate-pulse"></i>
+                <span id="ui-hp" class="text-xs font-bold text-rose-400">100%</span>
+            </div>
+        </div>
+
+        <!-- Area Kanvas Game (Layar Berburu) -->
+        <canvas id="gameCanvas" class="w-full flex-1 bg-gradient-to-b from-slate-950 to-emerald-950/70"></canvas>
+
+        <!-- Menu Utama / Game Over Overlay -->
+        <div id="screen-overlay" class="absolute inset-0 bg-slate-950/90 backdrop-blur-md z-20 flex flex-col items-center justify-center p-6 text-center transition-all duration-300">
+            <div class="bg-gradient-to-tr from-cyan-500 to-emerald-400 p-4 rounded-2xl text-slate-950 shadow-xl shadow-cyan-500/20 mb-4 animate-bounce">
+                <i id="overlay-icon" data-lucide="shield-alert" class="w-10 h-10"></i>
+            </div>
+            <h1 id="overlay-title" class="text-2xl font-black bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent uppercase tracking-wider mb-2">Cyber Forest</h1>
+            <p id="overlay-desc" class="text-xs text-slate-400 max-w-xs mb-6 leading-relaxed">
+                Sentuh dan geser layar untuk menggerakkan pemburu. Senjata akan otomatis menembak saat kamu menahan layar!
+            </p>
+            <button id="btn-action" class="px-8 py-3 bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-600 hover:to-emerald-600 text-slate-950 font-extrabold rounded-xl transition-all shadow-lg active:scale-95 text-xs uppercase tracking-wider">
+                Mulai Berburu
+            </button>
+        </div>
+
+        <!-- Indikator Navigasi Bawah -->
+        <div class="bg-slate-950 py-2.5 px-4 border-t border-slate-800 text-center text-[10px] text-slate-500 flex items-center justify-center gap-1.5">
+            <i data-lucide="fingerprint" class="w-3.5 h-3.5 text-cyan-500"></i>
+            <span>Sentuh & Geser di mana saja untuk bergerak & menembak.</span>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const uiScore = document.getElementById('ui-score');
+        const uiHp = document.getElementById('ui-hp');
+        const screenOverlay = document.getElementById('screen-overlay');
+        const overlayIcon = document.getElementById('overlay-icon');
+        const overlayTitle = document.getElementById('overlay-title');
+        const overlayDesc = document.getElementById('overlay-desc');
+        const btnAction = document.getElementById('btn-action');
+
+        // Resolusi Internal Canvas
+        const GAME_WIDTH = 400;
+        const GAME_HEIGHT = 550;
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // State Game
+        let isPlaying = false;
+        let score = 0;
+        let hp = 100;
+        let playerX = GAME_WIDTH / 2;
+        let playerY = GAME_HEIGHT - 50;
+        const playerWidth = 36;
+        const playerHeight = 24;
+
+        let bullets = [];
+        let enemies = [];
+        let particles = [];
+        
+        let enemySpawnTimer = 0;
+        let shootTimer = 0;
+        const shootCooldown = 12; // Jeda otomatisasi tembakan (semakin kecil semakin cepat)
+        let isTouching = false;
+
+        // --- SISTEM GERAK FLUID (SENTUH & MOUSE) ---
+        function handleMove(clientX) {
+            const rect = canvas.getBoundingClientRect();
+            const relativeX = ((clientX - rect.left) / rect.width) * GAME_WIDTH;
+            // Membatasi pemburu agar tidak keluar batas layar luar
+            playerX = Math.max(playerWidth / 2, Math.min(GAME_WIDTH - playerWidth / 2, relativeX));
+        }
+
+        // Mouse Events
+        canvas.addEventListener('mousedown', (e) => { isTouching = true; handleMove(e.clientX); });
+        canvas.addEventListener('mousemove', (e) => { if (isTouching) handleMove(e.clientX); });
+        window.addEventListener('mouseup', () => isTouching = false);
+
+        // Touch Events (Untuk Layar HP)
+        canvas.addEventListener('touchstart', (e) => {
+            isTouching = true;
+            handleMove(e.touches[0].clientX);
+        }, { passive: true });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            if (isTouching) handleMove(e.touches[0].clientX);
+        }, { passive: true });
+        
+        canvas.addEventListener('touchend', () => isTouching = false);
+
+        // Aksi Tombol Mulai
+        btnAction.addEventListener('click', () => {
+            score = 0;
+            hp = 100;
+            bullets = [];
+            enemies = [];
+            particles = [];
+            uiScore.innerText = score;
+            uiHp.innerText = hp + "%";
+            uiHp.classList.remove('text-rose-500');
+            isPlaying = true;
+            screenOverlay.classList.add('opacity-0', 'pointer-events-none');
+        });
+
+        function gameOver() {
+            isPlaying = false;
+            isTouching = false;
+            screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
+            overlayIcon.setAttribute('data-lucide', 'skull');
+            overlayTitle.innerText = "Misi Gagal";
+            overlayTitle.className = "text-2xl font-black text-rose-500 uppercase tracking-wider mb-2";
+            overlayDesc.innerHTML = `Hutan siber mengambil alih pertahananmu.<br><span class="text-white font-bold text-md">Skor Akhir: ${score}</span>`;
+            btnAction.innerText = "Mulai Ulang";
+            lucide.createIcons();
+        }
+
+        function spawnParticles(x, y, color) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: (Math.random() - 0.5) * 5,
+                    radius: Math.random() * 2.5 + 1,
+                    alpha: 1, color: color
+                });
+            }
+        }
+
+        // --- LOOP KONTROL UTAMA ---
+        function update() {
+            if (!isPlaying) {
+                requestAnimationFrame(update);
+                return;
+            }
+
+            // 1. Logika Auto Shoot ketika Layar Disentuh/Ditekan
+            if (isTouching) {
+                shootTimer++;
+                if (shootTimer >= shootCooldown) {
+                    shootTimer = 0;
+                    bullets.push({ x: playerX, y: playerY - 12, radius: 3, speed: 9 });
+                }
+            } else {
+                shootTimer = shootCooldown; // Siap menembak seketika disentuh kembali
+            }
+
+            // 2. Spawning Target Musuh
+            enemySpawnTimer++;
+            let spawnRate = Math.max(18, 50 - Math.floor(score / 4));
+            if (enemySpawnTimer >= spawnRate) {
+                enemySpawnTimer = 0;
+                const size = Math.random() * 16 + 16;
+                const isBig = size > 26;
+                enemies.push({
+                    x: Math.random() * (GAME_WIDTH - size) + size / 2,
+                    y: -size,
+                    width: size, height: size,
+                    speed: (Math.random() * 1.5 + 2) * (1 + (score * 0.015)),
+                    hp: isBig ? 3 : 1,
+                    color: isBig ? '#f59e0b' : '#22d3ee'
+                });
+            }
+
+            // 3. Update Posisi Peluru
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                bullets[i].y -= bullets[i].speed;
+                if (bullets[i].y < 0) bullets.splice(i, 1);
+            }
+
+            // 4. Update Posisi Musuh & Deteksi Tabrakan
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                e.y += e.speed;
+
+                // Musuh Menembus Batas Bawah
+                if (e.y > GAME_HEIGHT + e.height) {
+                    hp -= 20;
+                    if (hp < 0) hp = 0;
+                    uiHp.innerText = hp + "%";
+                    if (hp <= 40) uiHp.classList.add('text-rose-500');
+                    enemies.splice(i, 1);
+                    if (hp <= 0) gameOver();
+                    continue;
+                }
+
+                // Cek Tabrakan dengan Peluru
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    let b = bullets[j];
+                    if (b.x > e.x - e.width/2 && b.x < e.x + e.width/2 &&
+                        b.y > e.y - e.height/2 && b.y < e.y + e.height/2) {
+                        
+                        bullets.splice(j, 1);
+                        e.hp--;
+
+                        if (e.hp <= 0) {
+                            spawnParticles(e.x, e.y, e.color);
+                            score += e.width > 26 ? 3 : 1;
+                            uiScore.innerText = score;
+                            enemies.splice(i, 1);
+                            break;
+                        } else {
+                            spawnParticles(b.x, b.y, '#ffffff');
+                        }
+                    }
+                }
+            }
+
+            // 5. Update Partikel
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx; p.y += p.vy; p.alpha -= 0.04;
+                if (p.alpha <= 0) particles.splice(i, 1);
+            }
+
+            // --- CANVAS RENDERING PROCESSS ---
+            ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            // Render Latar Belakang Siluet Hutan/Grid
+            ctx.fillStyle = 'rgba(2, 6, 23, 1)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            
+            ctx.strokeStyle = 'rgba(16, 185, 129, 0.05)';
+            ctx.lineWidth = 1;
+            for(let x=0; x<GAME_WIDTH; x+=40) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, GAME_HEIGHT); ctx.stroke();
+            }
+
+            // Menggambar Peluru (Neon cyan glow effect)
+            ctx.fillStyle = '#22d3ee';
+            bullets.forEach(b => {
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Menggambar Pemburu (Segitiga Aero Modern)
+            ctx.save();
+            ctx.translate(playerX, playerY);
+            ctx.fillStyle = '#10b981';
+            ctx.beginPath();
+            ctx.moveTo(0, -14);
+            ctx.lineTo(playerWidth / 2, playerHeight / 2);
+            ctx.lineTo(-playerWidth / 2, playerHeight / 2);
+            ctx.closePath();
+            ctx.fill();
+            // Core Light
+            ctx.fillStyle = '#a7f3d0';
+            ctx.beginPath(); ctx.arc(0, 2, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+
+            // Menggambar Target (Monster Siber Kotak)
+            enemies.forEach(e => {
+                ctx.fillStyle = e.color;
+                ctx.save();
+                ctx.translate(e.x, e.y);
+                ctx.fillRect(-e.width/2, -e.height/2, e.width, e.height);
+                // Detail Mata Merah Marah
+                ctx.fillStyle = '#f43f5e';
+                ctx.fillRect(-e.width/5 - 1, -e.height/5, 3, 3);
+                ctx.fillRect(e.width/5 - 2, -e.height/5, 3, 3);
+                ctx.restore();
+            });
+
+            // Menggambar Efek Partikel Hancur
+            particles.forEach(p => {
+                ctx.save();
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+
+            requestAnimationFrame(update);
+        }
+
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>
