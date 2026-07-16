@@ -2,22 +2,52 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Space Guardian: Mega Laser Overdrive</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Space Guardian: Mobile Fix</title>
     <!-- Tailwind CSS untuk tampilan UI yang modern -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #020617; /* bg-slate-950 */
+        }
         body {
             touch-action: none; /* Mencegah zoom/scroll default di perangkat mobile */
             user-select: none;
             -webkit-user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        /* Container utama game menggunakan tinggi dinamis svh (Small Viewport Height) agar pas di HP */
+        .game-viewport {
+            position: relative;
+            width: 100%;
+            height: 100% ;
+            height: 100svh; /* Solusi ampuh untuk address bar HP */
+            max-width: 450px; /* Batasan lebar maksimal agar proporsional */
+            background-color: #0f172a; /* bg-slate-900 */
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        /* Canvas dipaksa mempertahankan rasio aspek tanpa terpotong */
+        #gameCanvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Menjaga seluruh area game tetap terlihat */
+            background-color: #020617;
         }
     </style>
 </head>
-<body class="bg-slate-950 text-white flex flex-col items-center justify-center min-h-screen overflow-hidden font-sans">
+<body class="text-white font-sans">
 
-    <!-- Container Game -->
-    <div class="relative w-full max-w-md h-[100vh] md:h-[90vh] bg-slate-900 md:rounded-2xl md:shadow-2xl overflow-hidden flex flex-col border border-slate-800">
+    <!-- Container Utama Game -->
+    <div class="game-viewport md:rounded-2xl md:shadow-2xl border border-slate-800/50">
         
         <!-- Header Informasi (UI Atas) -->
         <div class="absolute top-0 left-0 right-0 z-10 flex justify-between items-center px-6 py-4 bg-gradient-to-b from-slate-950/90 to-transparent pointer-events-none">
@@ -49,7 +79,7 @@
         </div>
 
         <!-- Canvas Utama Game -->
-        <canvas id="gameCanvas" class="w-full h-full block bg-slate-950"></canvas>
+        <canvas id="gameCanvas"></canvas>
 
         <!-- Layar Mulai / Game Over / Pause -->
         <div id="screen-overlay" class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/90 px-8 transition-all duration-300">
@@ -57,7 +87,9 @@
                 Space Guardian
             </h1>
             <p id="overlay-desc" class="text-xs text-slate-400 text-center max-w-xs mb-8">
-                Tahan layar untuk bergerak dan menembak otomatis. Gunakan tombol MEGA LASER di pojok kanan bawah untuk mengaktifkan serangan laser penghancur massal + bonus tembakan pelacak!
+                Tahan layar untuk bergerak dan menembak otomatis. Tembak peluru merah bos untuk menghancurkannya (Counter)! Gunakan Mega Laser untuk menyapu bersih semuanya.
+            <p id="overlay-desc" class="text-xs text-slate-400 text-center max-w-xs mb-8">
+                BAHAN EXPERIMENT BARA!!
             </p>
             <button id="btn-action" class="w-full max-w-xs py-4 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-extrabold uppercase tracking-widest rounded-xl shadow-lg shadow-emerald-500/20 transform active:scale-95 transition-all">
                 Mulai Game
@@ -85,6 +117,7 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
 
+        // Resolusi internal game (Rasio Aspek Tetap 9:16)
         const GAME_WIDTH = 360;
         const GAME_HEIGHT = 640;
 
@@ -126,11 +159,12 @@
         // Array Entitas
         let bullets = [];
         let enemies = [];
+        let enemyBullets = []; 
         let particles = [];
         let explosions = [];
         let powerups = [];   
         let starfield = [];  
-        let laserShards = []; // Array baru untuk menyimpan pecahan laser pelacak bonus
+        let laserShards = []; 
 
         // Status Power-Ups Pemain
         let activePowerUp = null; 
@@ -145,16 +179,17 @@
         let isLaserActive = false;
         let laserDuration = 0;
         const MAX_LASER_DURATION = 150; 
-        let shardSpawnTimer = 0; // Timer khusus untuk menembakkan laser shards bonus
+        let shardSpawnTimer = 0; 
 
         // MEKANIK BOS (BOSS FIGHT SYSTEM)
         let isBossFight = false;
         let boss = null;
-        let nextBossScoreThreshold = 50; // Bos pertama muncul di skor 50, lalu 100, dst.
+        let nextBossScoreThreshold = 50; 
 
         // Spawning Musuh
         let enemySpawnTimer = 0;
 
+        // Mengatur resolusi internal canvas agar konstan $360 \times 640$
         function resizeCanvas() {
             canvas.width = GAME_WIDTH;
             canvas.height = GAME_HEIGHT;
@@ -175,7 +210,7 @@
         }
         initStars();
 
-        // --- SISTEM INPUT ---
+        // --- FIX SISTEM INPUT MOBILE (KONVERSI SKALA LAYAR KE CANVAS ASLI) ---
         function handleInputStart(clientX, clientY) {
             if (!isPlaying || isPaused) return;
             isTouching = true;
@@ -193,11 +228,10 @@
 
         function updatePlayerPosition(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
-            const scaleX = GAME_WIDTH / rect.width;
-            const scaleY = GAME_HEIGHT / rect.height;
             
-            let targetX = (clientX - rect.left) * scaleX;
-            let targetY = (clientY - rect.top) * scaleY;
+            // Konversi akurat berdasarkan ukuran fisik canvas di layar HP saat ini
+            let targetX = ((clientX - rect.left) / rect.width) * GAME_WIDTH;
+            let targetY = ((clientY - rect.top) / rect.height) * GAME_HEIGHT;
 
             playerX = Math.max(playerWidth / 2, Math.min(GAME_WIDTH - playerWidth / 2, targetX));
             playerY = Math.max(GAME_HEIGHT / 2, Math.min(GAME_HEIGHT - 30, targetY));
@@ -291,34 +325,33 @@
             });
         }
 
-        // --- SISTEM INTI BOSS FIGHT (DENGAN RAGE MODE PHASE 2) ---
+        // --- SISTEM INTI BOSS FIGHT ---
         function triggerBossFight() {
             isBossFight = true;
             uiBossWarning.classList.add('opacity-100');
             triggerScreenShake(25);
 
-            // Bersihkan sisa musuh kroco agar duel lebih fokus
             enemies = [];
+            enemyBullets = []; 
 
             setTimeout(() => {
                 uiBossWarning.classList.remove('opacity-100');
                 
-                // Konfigurasi Bos Baru
                 boss = {
                     x: GAME_WIDTH / 2,
                     y: -60,
                     targetY: 100,
                     width: 76,
                     height: 50,
-                    hp: 100 + (score * 0.4), // HP Berskala makin kuat di skor tinggi
+                    hp: 100 + (score * 0.4), 
                     maxHp: 100 + (score * 0.4),
                     vx: 1.8,
-                    color: '#a855f7', // Warna Phase 1: Ungu Mistik
+                    color: '#a855f7', 
                     shootTimer: 0,
-                    phase: 1, // Mulai dari phase 1
-                    shieldHp: 40, // Memiliki perisai pelindung ekstra di awal!
+                    phase: 1, 
+                    shieldHp: 40, 
                     maxShieldHp: 40,
-                    spiralAngle: 0 // Untuk pola tembakan spiral Phase 2
+                    spiralAngle: 0 
                 };
             }, 2500);
         }
@@ -328,20 +361,18 @@
             spawnExplosion(boss.x - 25, boss.y + 10, '#ffffff', true);
             spawnExplosion(boss.x + 25, boss.y - 10, '#ef4444', true);
             
-            // Drop 3 Power Up sekaligus sebagai hadiah mengalahkan bos
             spawnRandomPowerUp(boss.x - 35, boss.y);
             spawnRandomPowerUp(boss.x, boss.y);
             spawnRandomPowerUp(boss.x + 35, boss.y);
 
-            score += 25; // Bonus skor besar
+            score += 25; 
             uiScore.innerText = score;
 
             boss = null;
             isBossFight = false;
-            nextBossScoreThreshold += 50; // Setel threshold untuk bos berikutnya
+            nextBossScoreThreshold += 50; 
         }
 
-        // AKTIFKAN MEGA LASER BEAM
         function activateMegaLaser() {
             if (laserCharge < 100 || isLaserActive || !isPlaying || isPaused) return;
             isLaserActive = true;
@@ -357,7 +388,6 @@
             activateMegaLaser();
         });
 
-
         // --- LOOP UPDATE JALANNYA PERMAINAN ---
         function update() {
             if (!isPlaying || isPaused) {
@@ -372,7 +402,6 @@
 
             const dt = timeScale;
 
-            // Background Stars
             starfield.forEach(s => {
                 s.y += s.speed * dt;
                 if (s.y > GAME_HEIGHT) {
@@ -381,7 +410,6 @@
                 }
             });
 
-            // Sistem Cas Laser
             if (!isLaserActive && laserCharge < 100) {
                 laserCharge = Math.min(100, laserCharge + LASER_CHARGE_SPEED * dt);
                 laserProgress.style.width = laserCharge + '%';
@@ -391,38 +419,24 @@
                 }
             }
 
-            // MEKANIK BARU: LOGIKA BONUS LASER SHARDS (Tembakan Pelacak Tambahan)
             if (isLaserActive) {
                 laserDuration -= dt;
                 triggerScreenShake(5); 
 
                 shardSpawnTimer += dt;
-                // Menembakkan pecahan laser pelacak setiap 5 frame dari sisi kiri & kanan pesawat
                 if (shardSpawnTimer >= 5) {
                     shardSpawnTimer = 0;
                     
-                    // Sisi Kiri Pesawat
                     laserShards.push({
-                        x: playerX - 16,
-                        y: playerY,
-                        vx: -4 - Math.random() * 2,
-                        vy: -2 - Math.random() * 3,
-                        speed: 10,
-                        color: '#c084fc',
-                        width: 3,
-                        height: 12
+                        x: playerX - 16, y: playerY,
+                        vx: -4 - Math.random() * 2, vy: -2 - Math.random() * 3,
+                        speed: 10, color: '#c084fc', width: 3, height: 12
                     });
 
-                    // Sisi Kanan Pesawat
                     laserShards.push({
-                        x: playerX + 16,
-                        y: playerY,
-                        vx: 4 + Math.random() * 2,
-                        vy: -2 - Math.random() * 3,
-                        speed: 10,
-                        color: '#c084fc',
-                        width: 3,
-                        height: 12
+                        x: playerX + 16, y: playerY,
+                        vx: 4 + Math.random() * 2, vy: -2 - Math.random() * 3,
+                        speed: 10, color: '#c084fc', width: 3, height: 12
                     });
                 }
 
@@ -433,11 +447,9 @@
                 }
             }
 
-            // Update pergerakan Laser Shards pelacak bonus
+            // Update Laser Shards
             for (let i = laserShards.length - 1; i >= 0; i--) {
                 let s = laserShards[i];
-
-                // Mencari target terdekat (musuh biasa atau bos)
                 let target = null;
                 let minDist = 1000;
 
@@ -446,53 +458,39 @@
                 } else {
                     enemies.forEach(e => {
                         let dist = Math.hypot(e.x - s.x, e.y - s.y);
-                        if (dist < minDist) {
-                            minDist = dist;
-                            target = e;
-                        }
+                        if (dist < minDist) { minDist = dist; target = e; }
                     });
                 }
 
-                // Sistem Homing (Pelacakan Target)
                 if (target) {
                     let angle = Math.atan2(target.y - s.y, target.x - s.x);
-                    // Belok perlahan menuju target
                     s.vx += Math.cos(angle) * 1.5 * dt;
                     s.vy += Math.sin(angle) * 1.5 * dt;
 
-                    // Batasi kecepatan maksimal pelacak
                     let mag = Math.hypot(s.vx, s.vy);
                     if (mag > s.speed) {
                         s.vx = (s.vx / mag) * s.speed;
                         s.vy = (s.vy / mag) * s.speed;
                     }
                 } else {
-                    // Jika tidak ada musuh, meluncur saja ke atas
                     s.vy -= 0.5 * dt;
                 }
 
                 s.x += s.vx * dt;
                 s.y += s.vy * dt;
 
-                // Cek tabrakan laser shard dengan Bos
                 if (boss && s.x > boss.x - boss.width/2 && s.x < boss.x + boss.width/2 &&
                     s.y > boss.y - boss.height/2 && s.y < boss.y + boss.height/2) {
                     
-                    if (boss.shieldHp > 0) {
-                        boss.shieldHp -= 1.5; // Damage lumayan kuat ke shield
-                    } else {
-                        boss.hp -= 1.0;
-                    }
+                    if (boss.shieldHp > 0) boss.shieldHp -= 1.5;
+                    else boss.hp -= 1.0;
+                    
                     spawnParticles(s.x, s.y, s.color, 4);
                     laserShards.splice(i, 1);
-
-                    if (boss.hp <= 0) {
-                        destroyBoss();
-                    }
+                    if (boss.hp <= 0) destroyBoss();
                     continue;
                 }
 
-                // Cek tabrakan laser shard dengan musuh biasa
                 let hitEnemy = false;
                 for (let j = enemies.length - 1; j >= 0; j--) {
                     let e = enemies[j];
@@ -509,21 +507,17 @@
                         break;
                     }
                 }
-
                 if (hitEnemy) continue;
 
-                // Hapus jika keluar batas layar
                 if (s.y < -20 || s.x < -20 || s.x > GAME_WIDTH + 20 || s.y > GAME_HEIGHT + 20) {
                     laserShards.splice(i, 1);
                 }
             }
 
-            // Pemicu Bos Fight berdasarkan skor
             if (score >= nextBossScoreThreshold && !isBossFight) {
                 triggerBossFight();
             }
 
-            // Update Power-up timers
             let currentCooldown = baseShootCooldown;
             if (activePowerUp === 'speed') currentCooldown = 5;
 
@@ -535,7 +529,7 @@
                 }
             }
 
-            // --- 1. MENEMBAK OTOMATIS ---
+            // --- MENEMBAK OTOMATIS ---
             if (isTouching && !isLaserActive) {
                 if (shootTimer === 0) {
                     if (activePowerUp === 'dual') {
@@ -546,11 +540,9 @@
                     }
                 }
                 shootTimer += dt;
-                if (shootTimer >= currentCooldown) {
-                    shootTimer = 0; 
-                }
+                if (shootTimer >= currentCooldown) shootTimer = 0;
             } else {
-                shootTimer = 0; 
+                shootTimer = 0;
             }
 
             // --- UPDATE ITEM POWERUPS ---
@@ -581,12 +573,10 @@
                         uiPowerup.className = `text-[10px] uppercase tracking-wider font-extrabold animate-pulse ${p.type === 'dual' ? 'text-rose-400' : 'text-amber-400'}`;
                         uiPowerup.classList.remove('hidden');
                     }
-
                     powerups.splice(i, 1);
                 }
             }
 
-            // Combo Timer reduction
             if (comboCount > 0) {
                 comboTimer -= dt;
                 if (comboTimer <= 0) {
@@ -595,13 +585,11 @@
                 }
             }
 
-            // --- 2. LOGIKA PERILAKU BOS (PHASE 1 VS PHASE 2) ---
+            // --- LOGIKA PERILAKU & TEMBAKAN BOS ---
             if (boss) {
-                // Turun perlahan ke arena
                 if (boss.y < boss.targetY) {
                     boss.y += 1 * dt;
                 } else {
-                    // Pergerakan horizontal (Rage Mode di Phase 2 bergerak 2x lebih cepat)
                     let currentSpeed = boss.phase === 2 ? boss.vx * 2 : boss.vx;
                     boss.x += currentSpeed * dt;
                     if (boss.x > GAME_WIDTH - boss.width/2 || boss.x < boss.width/2) {
@@ -609,76 +597,62 @@
                     }
                 }
 
-                // Deteksi Transisi ke Phase 2 (Rage Mode saat HP < 50% dan Perisai sudah pecah)
                 if (boss.phase === 1 && boss.shieldHp <= 0 && boss.hp <= (boss.maxHp / 2)) {
                     boss.phase = 2;
-                    boss.color = '#ef4444'; // Berubah warna menjadi Merah Menyala
+                    boss.color = '#ef4444'; 
                     triggerScreenShake(25);
-                    spawnExplosion(boss.x, boss.y, '#f43f5e', true); // Efek ledakan transisi phase
+                    spawnExplosion(boss.x, boss.y, '#f43f5e', true);
                 }
 
-                // Sistem Tembakan Bos
                 boss.shootTimer += dt;
                 
                 if (boss.phase === 1) {
-                    // Tembakan Phase 1: Meteor Menyebar Tiga Jalur
                     let fireInterval = 38;
                     if (boss.shootTimer >= fireInterval) {
                         boss.shootTimer = 0;
                         for (let angle = -0.4; angle <= 0.4; angle += 0.4) {
-                            enemies.push({
+                            enemyBullets.push({
                                 x: boss.x,
                                 y: boss.y + boss.height/2,
-                                width: 16,
-                                height: 16,
+                                width: 12,
+                                height: 12,
                                 speed: 3.2,
                                 vx: Math.sin(angle) * 2,
-                                hp: 1,
                                 color: '#e9d5ff'
                             });
                         }
                     }
                 } else if (boss.phase === 2) {
-                    // Tembakan Phase 2 (Rage Mode): Spiral Barrage Meriam Kiamat!
-                    let fireInterval = 8; // Tembakan super cepat berkala
+                    let fireInterval = 8; 
                     if (boss.shootTimer >= fireInterval) {
                         boss.shootTimer = 0;
-                        boss.spiralAngle += 0.4; // Sudut tembakan terus memutar
+                        boss.spiralAngle += 0.4; 
                         
-                        // Menembakkan peluru ganda berputar berlawanan arah
-                        const speeds = [3.5];
-                        speeds.forEach(spd => {
-                            enemies.push({
-                                x: boss.x,
-                                y: boss.y + 10,
-                                width: 12,
-                                height: 12,
-                                speed: spd,
-                                vx: Math.cos(boss.spiralAngle) * 3,
-                                hp: 1,
-                                color: '#fca5a5' // Peluru merah kemarahan
-                            });
+                        enemyBullets.push({
+                            x: boss.x,
+                            y: boss.y + 10,
+                            width: 10,
+                            height: 10,
+                            speed: 3.5,
+                            vx: Math.cos(boss.spiralAngle) * 3,
+                            color: '#fca5a5' 
                         });
                     }
                 }
 
-                // Kerusakan konstan dari sambaran MEGA LASER BEAM ke Bos
                 if (isLaserActive && Math.abs(playerX - boss.x) < boss.width/2 + 25 && playerY > boss.y) {
                     if (boss.shieldHp > 0) {
-                        boss.shieldHp -= 0.8 * dt; // Laser mengikis shield dengan cepat
+                        boss.shieldHp -= 0.8 * dt;
                         spawnParticles(boss.x + (Math.random() - 0.5) * 45, boss.y + 20, '#06b6d4', 2);
                     } else {
-                        boss.hp -= 0.7 * dt; // Laser melukai tubuh utama bos
+                        boss.hp -= 0.7 * dt;
                         spawnParticles(boss.x + (Math.random() - 0.5) * 30, boss.y + 10, '#ffffff', 2);
                     }
-
-                    if (boss.hp <= 0) {
-                        destroyBoss();
-                    }
+                    if (boss.hp <= 0) destroyBoss();
                 }
             }
 
-            // --- 3. PEMUNCULAN MUSUH BIASA (Dihentikan saat Bos bertarung) ---
+            // --- PEMUNCULAN MUSUH BIASA ---
             if (!isBossFight && !boss) {
                 enemySpawnTimer += dt;
                 let spawnRate = Math.max(12, 45 - Math.floor(score / 5));
@@ -686,7 +660,6 @@
                     enemySpawnTimer = 0;
                     const size = Math.random() * 18 + 15;
                     const isBig = size > 26;
-                    
                     const baseSpeed = Math.random() * 1.3 + 1.8;
                     const speedMultiplier = Math.min(2.5, 1 + (score * 0.012)); 
 
@@ -703,43 +676,89 @@
                 }
             }
 
-            // --- 4. UPDATE BULLETS ---
+            // --- UPDATE BULLETS PLAYER (COUNTER BULLET LOGIC) ---
             for (let i = bullets.length - 1; i >= 0; i--) {
                 bullets[i].y -= bullets[i].speed * dt;
 
-                // Tabrakan peluru biasa dengan Bos
+                let bulletRemoved = false;
+
+                for (let j = enemyBullets.length - 1; j >= 0; j--) {
+                    let eb = enemyBullets[j];
+                    let dist = Math.hypot(bullets[i].x - eb.x, bullets[i].y - eb.y);
+                    if (dist < (bullets[i].radius + eb.width / 2)) {
+                        spawnParticles(eb.x, eb.y, '#f43f5e', 4);
+                        enemyBullets.splice(j, 1);
+                        bullets.splice(i, 1);
+                        bulletRemoved = true;
+                        break;
+                    }
+                }
+
+                if (bulletRemoved) continue;
+
                 if (boss && bullets[i].x > boss.x - boss.width/2 - bullets[i].radius &&
                     bullets[i].x < boss.x + boss.width/2 + bullets[i].radius &&
                     bullets[i].y > boss.y - boss.height/2 && bullets[i].y < boss.y + boss.height/2) {
                     
                     if (boss.shieldHp > 0) {
                         boss.shieldHp--;
-                        spawnParticles(bullets[i].x, bullets[i].y, '#22d3ee', 4); // Partikel biru perisai
+                        spawnParticles(bullets[i].x, bullets[i].y, '#22d3ee', 4);
                     } else {
                         boss.hp--;
                         spawnParticles(bullets[i].x, bullets[i].y, '#ffffff', 3);
                     }
 
                     bullets.splice(i, 1);
-
-                    if (boss.hp <= 0) {
-                        destroyBoss();
-                    }
+                    if (boss.hp <= 0) destroyBoss();
                     continue;
                 }
 
-                if (bullets[i].y < -10) {
-                    bullets.splice(i, 1);
+                if (bullets[i].y < -10) bullets.splice(i, 1);
+            }
+
+            // --- UPDATE ENEMY BULLETS (AM AN DARI SISI KANAN KIRI) ---
+            for (let i = enemyBullets.length - 1; i >= 0; i--) {
+                let eb = enemyBullets[i];
+                eb.y += eb.speed * dt;
+                if (eb.vx) eb.x += eb.vx * dt;
+
+                if (isLaserActive && Math.abs(playerX - eb.x) < 25 && playerY > eb.y) {
+                    enemyBullets.splice(i, 1);
+                    continue;
+                }
+
+                if (eb.x > playerX - playerWidth/2 && eb.x < playerX + playerWidth/2 &&
+                    eb.y > playerY - playerHeight/2 && eb.y < playerY + playerHeight/2) {
+                    
+                    hp -= 10; 
+                    triggerScreenShake(8);
+                    spawnParticles(eb.x, eb.y, '#ef4444', 5);
+                    
+                    if (hp < 0) hp = 0;
+                    uiHp.innerText = hp + "%";
+                    if (hp <= 40) uiHp.className = "text-2xl font-black text-rose-500 animate-pulse";
+                    
+                    enemyBullets.splice(i, 1);
+                    if (hp <= 0) triggerSlowMotionDeath();
+                    continue;
+                }
+
+                // Cek Batas kanan kiri layar internal game ($360$)
+                if (eb.x < -10 || eb.x > GAME_WIDTH + 10) {
+                    enemyBullets.splice(i, 1);
+                    continue;
+                }
+
+                if (eb.y > GAME_HEIGHT + 20) {
+                    enemyBullets.splice(i, 1);
                 }
             }
 
-            // --- 5. UPDATE MUSUH BIASA / PELURU BOS & TABRAKANNYA ---
+            // --- UPDATE MUSUH BIASA ---
             for (let i = enemies.length - 1; i >= 0; i--) {
                 let e = enemies[i];
                 e.y += e.speed * dt;
-                if (e.vx) e.x += e.vx * dt; 
 
-                // Deteksi tabrakan tersapu MEGA LASER utama
                 if (isLaserActive && Math.abs(playerX - e.x) < e.width/2 + 25 && playerY > e.y) {
                     spawnExplosion(e.x, e.y, e.color, false);
                     enemies.splice(i, 1);
@@ -748,7 +767,6 @@
                     continue;
                 }
 
-                // Musuh berhasil menembus dasar pertahanan pemain
                 if (e.y > GAME_HEIGHT + e.height) {
                     hp -= e.width > 26 ? 30 : 15; 
                     triggerScreenShake(15); 
@@ -764,10 +782,8 @@
                     continue;
                 }
 
-                // Tabrakan peluru biasa dengan musuh biasa
                 for (let j = bullets.length - 1; j >= 0; j--) {
                     let b = bullets[j];
-                    
                     if (b.x > e.x - e.width/2 - b.radius && b.x < e.x + e.width/2 + b.radius &&
                         b.y > e.y - e.height/2 - b.radius && b.y < e.y + e.height/2 + b.radius) {
                         
@@ -803,49 +819,35 @@
                 }
             }
 
-            // update explosions
+            // update explosions & particles
             for (let i = explosions.length - 1; i >= 0; i--) {
                 let exp = explosions[i];
                 exp.radius += (exp.maxRadius - exp.radius) * 0.15 * dt;
                 exp.alpha -= exp.decay * dt;
-                if (exp.alpha <= 0) {
-                    explosions.splice(i, 1);
-                }
+                if (exp.alpha <= 0) explosions.splice(i, 1);
             }
-
-            // update particles
             for (let i = particles.length - 1; i >= 0; i--) {
                 let p = particles[i];
-                p.vx *= 0.96;
-                p.vy *= 0.96;
-                p.x += p.vx * dt; 
-                p.y += p.vy * dt; 
-                p.alpha -= p.decay * dt;
+                p.vx *= 0.96; p.vy *= 0.96;
+                p.x += p.vx * dt; p.y += p.vy * dt; p.alpha -= p.decay * dt;
                 if (p.alpha <= 0) particles.splice(i, 1);
             }
 
             // --- RENDERING CANVAS ---
             ctx.save();
-            
             if (shakeIntensity > 0) {
-                const dx = (Math.random() - 0.5) * shakeIntensity;
-                const dy = (Math.random() - 0.5) * shakeIntensity;
-                ctx.translate(dx, dy);
+                ctx.translate((Math.random() - 0.5) * shakeIntensity, (Math.random() - 0.5) * shakeIntensity);
             }
 
             ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
-
-            // Background space
             ctx.fillStyle = '#020617';
             ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-            // Stars
             starfield.forEach(s => {
                 ctx.fillStyle = `rgba(255, 255, 255, ${s.alpha})`;
                 ctx.fillRect(s.x, s.y, s.size, s.size);
             });
             
-            // Grid sci-fi
             ctx.strokeStyle = 'rgba(16, 185, 129, 0.03)';
             ctx.lineWidth = 1;
             for(let x=0; x<GAME_WIDTH; x+=40) {
@@ -855,345 +857,152 @@
                 ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(GAME_WIDTH, y); ctx.stroke();
             }
 
-            // Render Item Drops
             powerups.forEach(p => {
-                ctx.save();
-                ctx.translate(p.x, p.y);
-                const scale = 1 + Math.sin(p.pulse) * 0.15;
-                ctx.scale(scale, scale);
-
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = p.color;
-
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.arc(0, -3, 6, Math.PI, 0);
-                ctx.arc(0, 3, 6, 0, Math.PI);
-                ctx.closePath();
-                ctx.fill();
-
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 8px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                const label = p.type === 'shield' ? '+' : (p.type === 'dual' ? 'D' : 'S');
-                ctx.fillText(label, 0, 0);
-
+                ctx.save(); ctx.translate(p.x, p.y);
+                const scale = 1 + Math.sin(p.pulse) * 0.15; ctx.scale(scale, scale);
+                ctx.shadowBlur = 10; ctx.shadowColor = p.color; ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(0, -3, 6, Math.PI, 0); ctx.arc(0, 3, 6, 0, Math.PI); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = '#ffffff'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(p.type === 'shield' ? '+' : (p.type === 'dual' ? 'D' : 'S'), 0, 0);
                 ctx.restore();
             });
 
-            // Semburan MEGA LASER BEAM (Visual Lebih Padat Berenergi!)
             if (isLaserActive) {
                 ctx.save();
-                
-                // Lapisan Luar Laser (Ungu Transparan Lebar)
-                ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)';
-                ctx.lineWidth = 45 + Math.random() * 20;
-                ctx.shadowBlur = 35;
-                ctx.shadowColor = '#c084fc';
-                ctx.beginPath();
-                ctx.moveTo(playerX, playerY - 15);
-                ctx.lineTo(playerX, 0);
-                ctx.stroke();
+                ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)'; ctx.lineWidth = 45 + Math.random() * 20;
+                ctx.shadowBlur = 35; ctx.shadowColor = '#c084fc';
+                ctx.beginPath(); ctx.moveTo(playerX, playerY - 15); ctx.lineTo(playerX, 0); ctx.stroke();
 
-                // Lapisan Tengah (Merah Muda Terang)
-                ctx.strokeStyle = '#f472b6';
-                ctx.lineWidth = 25 + Math.random() * 10;
-                ctx.beginPath();
-                ctx.moveTo(playerX, playerY - 15);
-                ctx.lineTo(playerX, 0);
-                ctx.stroke();
+                ctx.strokeStyle = '#f472b6'; ctx.lineWidth = 25 + Math.random() * 10;
+                ctx.beginPath(); ctx.moveTo(playerX, playerY - 15); ctx.lineTo(playerX, 0); ctx.stroke();
 
-                // Inti Inti Laser (Putih Pekat Sempit)
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 12 + Math.random() * 5;
-                ctx.beginPath();
-                ctx.moveTo(playerX, playerY - 15);
-                ctx.lineTo(playerX, 0);
-                ctx.stroke();
-                
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 12 + Math.random() * 5;
+                ctx.beginPath(); ctx.moveTo(playerX, playerY - 15); ctx.lineTo(playerX, 0); ctx.stroke();
                 ctx.restore();
             }
 
-            // DRAW LASER SHARDS (Bonus Tembakan Pelacak)
             laserShards.forEach(s => {
-                ctx.save();
-                ctx.translate(s.x, s.y);
-                
-                // Rotasi pecahan laser sesuai arah terbangnya
-                let angle = Math.atan2(s.vy, s.vx) + Math.PI/2;
-                ctx.rotate(angle);
-
-                ctx.shadowBlur = 12;
-                ctx.shadowColor = s.color;
-                
-                // Gambar ekor cahaya laser shards
-                ctx.strokeStyle = 'rgba(192, 132, 252, 0.4)';
-                ctx.lineWidth = s.width * 2;
-                ctx.beginPath();
-                ctx.moveTo(0, 0);
-                ctx.lineTo(0, s.height);
-                ctx.stroke();
-
-                // Gambar bagian inti peluru shards
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(-s.width/2, 0, s.width, s.height/2);
-
+                ctx.save(); ctx.translate(s.x, s.y);
+                ctx.rotate(Math.atan2(s.vy, s.vx) + Math.PI/2);
+                ctx.shadowBlur = 12; ctx.shadowColor = s.color;
+                ctx.strokeStyle = 'rgba(192, 132, 252, 0.4)'; ctx.lineWidth = s.width * 2;
+                ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, s.height); ctx.stroke();
+                ctx.fillStyle = '#ffffff'; ctx.fillRect(-s.width/2, 0, s.width, s.height/2);
                 ctx.restore();
             });
 
-            // Peluru Biasa Player
             bullets.forEach(b => {
                 ctx.save();
                 ctx.strokeStyle = activePowerUp === 'speed' ? 'rgba(245, 158, 11, 0.4)' : 'rgba(34, 211, 238, 0.4)';
-                ctx.lineWidth = b.radius * 2;
-                ctx.beginPath();
-                ctx.moveTo(b.x, b.y);
-                ctx.lineTo(b.x, b.y + 12);
-                ctx.stroke();
-
+                ctx.lineWidth = b.radius * 2; ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x, b.y + 12); ctx.stroke();
                 ctx.fillStyle = activePowerUp === 'speed' ? '#f59e0b' : '#22d3ee';
-                ctx.beginPath();
-                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
             });
 
-            // Pesawat Pemain (Player)
-            ctx.save();
-            ctx.translate(playerX, playerY);
-
-            // Api Pendorong Belakang Pesawat
+            // Player rendering
+            ctx.save(); ctx.translate(playerX, playerY);
             if (isTouching && !isLaserActive) {
                 ctx.fillStyle = Math.random() > 0.5 ? '#f59e0b' : '#f43f5e';
-                ctx.beginPath();
-                ctx.moveTo(-6, playerHeight / 2);
-                ctx.lineTo(0, (playerHeight / 2) + (Math.random() * 14 + 6));
-                ctx.lineTo(6, playerHeight / 2);
-                ctx.closePath();
-                ctx.fill();
+                ctx.beginPath(); ctx.moveTo(-6, playerHeight / 2); ctx.lineTo(0, (playerHeight / 2) + (Math.random() * 14 + 6)); ctx.lineTo(6, playerHeight / 2); ctx.closePath(); ctx.fill();
             }
-
-            ctx.fillStyle = '#065f46';
-            ctx.beginPath();
-            ctx.moveTo(-playerWidth/2, playerHeight/2);
-            ctx.lineTo(-playerWidth/2 - 4, playerHeight/4);
-            ctx.lineTo(-playerWidth/4, -playerHeight/4);
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.moveTo(playerWidth/2, playerHeight/2);
-            ctx.lineTo(playerWidth/2 + 4, playerHeight/4);
-            ctx.lineTo(playerWidth/4, -playerHeight/4);
-            ctx.fill();
-
-            ctx.fillStyle = '#10b981';
-            ctx.beginPath();
-            ctx.moveTo(0, -15);
-            ctx.lineTo(playerWidth / 2, playerHeight / 2);
-            ctx.lineTo(-playerWidth / 2, playerHeight / 2);
-            ctx.closePath();
-            ctx.fill();
-            
-            ctx.fillStyle = activePowerUp ? '#fbbf24' : '#a7f3d0';
-            ctx.beginPath(); 
-            ctx.arc(0, 2, 4.5, 0, Math.PI * 2); 
-            ctx.fill();
+            ctx.fillStyle = '#065f46'; ctx.beginPath(); ctx.moveTo(-playerWidth/2, playerHeight/2); ctx.lineTo(-playerWidth/2 - 4, playerHeight/4); ctx.lineTo(-playerWidth/4, -playerHeight/4); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(playerWidth/2, playerHeight/2); ctx.lineTo(playerWidth/2 + 4, playerHeight/4); ctx.lineTo(playerWidth/4, -playerHeight/4); ctx.fill();
+            ctx.fillStyle = '#10b981'; ctx.beginPath(); ctx.moveTo(0, -15); ctx.lineTo(playerWidth / 2, playerHeight / 2); ctx.lineTo(-playerWidth / 2, playerHeight / 2); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = activePowerUp ? '#fbbf24' : '#a7f3d0'; ctx.beginPath(); ctx.arc(0, 2, 4.5, 0, Math.PI * 2); ctx.fill();
             ctx.restore();
 
-            // Render Target Musuh Biasa / Peluru Bos
             enemies.forEach(e => {
-                ctx.save();
-                ctx.translate(e.x, e.y);
-                ctx.fillStyle = e.color;
-                ctx.fillRect(-e.width/2, -e.height/2, e.width, e.height);
-                
-                ctx.strokeStyle = '#ffffff';
-                ctx.globalAlpha = 0.3;
-                ctx.strokeRect(-e.width/2, -e.height/2, e.width, e.height);
-                
-                ctx.globalAlpha = 1.0;
-                ctx.fillStyle = '#f43f5e';
-                ctx.fillRect(-e.width/5 - 1.5, -e.height/5, 3, 3);
-                ctx.fillRect(e.width/5 - 1.5, -e.height/5, 3, 3);
+                ctx.save(); ctx.translate(e.x, e.y); ctx.fillStyle = e.color; ctx.fillRect(-e.width/2, -e.height/2, e.width, e.height);
+                ctx.strokeStyle = '#ffffff'; ctx.globalAlpha = 0.3; ctx.strokeRect(-e.width/2, -e.height/2, e.width, e.height);
+                ctx.globalAlpha = 1.0; ctx.fillStyle = '#f43f5e'; ctx.fillRect(-e.width/5 - 1.5, -e.height/5, 3, 3); ctx.fillRect(e.width/5 - 1.5, -e.height/5, 3, 3);
                 ctx.restore();
             });
 
-            // --- DRAW GIGA-BOSS (PHASE 1 & RAGE PHASE 2) ---
-            if (boss) {
+            // DRAW ENEMY BULLETS
+            enemyBullets.forEach(eb => {
                 ctx.save();
-                ctx.translate(boss.x, boss.y);
-                
-                // Efek Aura Cahaya Bos (Makin tebal saat Phase 2)
-                ctx.shadowBlur = boss.phase === 2 ? 30 : 20;
-                ctx.shadowColor = boss.color;
-
-                // 1. Sayap Mekanik Bos
-                ctx.fillStyle = boss.phase === 2 ? '#991b1b' : '#7e22ce';
+                ctx.translate(eb.x, eb.y);
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = eb.color;
+                ctx.fillStyle = eb.color;
                 ctx.beginPath();
-                ctx.moveTo(-boss.width/2 - 15, -boss.height/4);
-                ctx.lineTo(-boss.width/2, boss.height/2 + 5);
-                ctx.lineTo(0, 0);
-                ctx.lineTo(boss.width/2, boss.height/2 + 5);
-                ctx.lineTo(boss.width/2 + 15, -boss.height/4);
-                ctx.closePath();
+                ctx.arc(0, 0, eb.width / 2, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(0, 0, eb.width / 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
 
-                // 2. Tubuh Inti Bos
-                ctx.fillStyle = boss.color;
-                ctx.fillRect(-boss.width/2, -boss.height/2, boss.width, boss.height);
-                
-                // Plat tengah
-                ctx.fillStyle = boss.phase === 2 ? '#450a0a' : '#3b0764';
-                ctx.fillRect(-18, -boss.height/2 + 4, 36, boss.height - 8);
-
-                // 3. Mata Bos (Berkedip super marah di Phase 2)
-                if (boss.phase === 2 && Math.floor(Date.now() / 80) % 2 === 0) {
-                    ctx.fillStyle = '#ffffff'; // Berkedip putih menyilaukan
-                } else {
-                    ctx.fillStyle = '#ef4444'; // Merah menyala
-                }
-                ctx.fillRect(-20, -4, 10, 10);
-                ctx.fillRect(10, -4, 10, 10);
-
-                // 4. Perisai Heksagonal Pelindung (Draw jika shieldHp > 0)
+            if (boss) {
+                ctx.save(); ctx.translate(boss.x, boss.y);
+                ctx.shadowBlur = boss.phase === 2 ? 30 : 20; ctx.shadowColor = boss.color;
+                ctx.fillStyle = boss.phase === 2 ? '#991b1b' : '#7e22ce';
+                ctx.beginPath(); ctx.moveTo(-boss.width/2 - 15, -boss.height/4); ctx.lineTo(-boss.width/2, boss.height/2 + 5); ctx.lineTo(0, 0); ctx.lineTo(boss.width/2, boss.height/2 + 5); ctx.lineTo(boss.width/2 + 15, -boss.height/4); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = boss.color; ctx.fillRect(-boss.width/2, -boss.height/2, boss.width, boss.height);
+                ctx.fillStyle = boss.phase === 2 ? '#450a0a' : '#3b0764'; ctx.fillRect(-18, -boss.height/2 + 4, 36, boss.height - 8);
+                if (boss.phase === 2 && Math.floor(Date.now() / 80) % 2 === 0) ctx.fillStyle = '#ffffff'; else ctx.fillStyle = '#ef4444';
+                ctx.fillRect(-20, -4, 10, 10); ctx.fillRect(10, -4, 10, 10);
                 if (boss.shieldHp > 0) {
-                    ctx.strokeStyle = `rgba(34, 211, 238, ${0.4 + Math.sin(Date.now() / 100) * 0.15})`;
-                    ctx.lineWidth = 3.5;
-                    ctx.beginPath();
-                    // Menggambar lingkaran perisai heksagonal di sekeliling bos
-                    ctx.arc(0, 0, boss.width * 0.75, 0, Math.PI * 2);
-                    ctx.stroke();
-                    
-                    // Efek jaring perisai tipis
-                    ctx.fillStyle = 'rgba(34, 211, 238, 0.05)';
-                    ctx.fill();
+                    ctx.strokeStyle = `rgba(34, 211, 238, ${0.4 + Math.sin(Date.now() / 100) * 0.15})`; ctx.lineWidth = 3.5;
+                    ctx.beginPath(); arc(0, 0, boss.width * 0.75, 0, Math.PI * 2); ctx.stroke();
+                    ctx.fillStyle = 'rgba(34, 211, 238, 0.05)'; ctx.fill();
                 }
-
                 ctx.restore();
 
-                // --- BOS HP BAR & SHIELD BAR (DI ATAS KEPALA BOS) ---
-                const barWidth = 120;
-                const barHeight = 6;
-                const barX = boss.x - barWidth / 2;
-                const barY = boss.y - boss.height / 2 - 20;
-
-                // Background Bar
-                ctx.fillStyle = '#1e1b4b';
-                ctx.fillRect(barX, barY, barWidth, barHeight);
-
-                // Draw Shield Bar di atas HP Bar (jika masih aktif)
+                const barWidth = 120; const barHeight = 6; const barX = boss.x - barWidth / 2; const barY = boss.y - boss.height / 2 - 20;
+                ctx.fillStyle = '#1e1b4b'; ctx.fillRect(barX, barY, barWidth, barHeight);
                 if (boss.shieldHp > 0) {
-                    ctx.fillStyle = '#0891b2'; // Cyan muda untuk perisai
-                    ctx.fillRect(barX, barY - 6, barWidth, 3);
-                    const currentShieldPercent = Math.max(0, boss.shieldHp / boss.maxShieldHp);
-                    ctx.fillStyle = '#22d3ee'; // Cyan terang
-                    ctx.fillRect(barX, barY - 6, barWidth * currentShieldPercent, 3);
+                    ctx.fillStyle = '#0891b2'; ctx.fillRect(barX, barY - 6, barWidth, 3);
+                    ctx.fillStyle = '#22d3ee'; ctx.fillRect(barX, barY - 6, barWidth * Math.max(0, boss.shieldHp / boss.maxShieldHp), 3);
                 }
-
-                // Draw Main HP Bar
-                const currentHpPercent = Math.max(0, boss.hp / boss.maxHp);
-                ctx.fillStyle = boss.phase === 2 ? '#ef4444' : '#ec4899'; // Merah di Phase 2, Pink di Phase 1
-                ctx.fillRect(barX, barY, barWidth * currentHpPercent, barHeight);
-
-                // Label Teks Phase 2 "RAGE"
+                ctx.fillStyle = boss.phase === 2 ? '#ef4444' : '#ec4899';
+                ctx.fillRect(barX, barY, barWidth * Math.max(0, boss.hp / boss.maxHp), barHeight);
                 if (boss.phase === 2) {
-                    ctx.fillStyle = '#ef4444';
-                    ctx.font = 'bold 9px sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.fillText("RAGE MODE ACTIVE!", boss.x, barY - 10);
+                    ctx.fillStyle = '#ef4444'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.fillText("RAGE MODE ACTIVE!", boss.x, barY - 10);
                 }
             }
 
-            // Render Ledakan Ring
             explosions.forEach(exp => {
-                ctx.save();
-                ctx.globalAlpha = exp.alpha;
-                ctx.strokeStyle = exp.color;
-                ctx.lineWidth = 3.5;
-                ctx.beginPath();
-                ctx.arc(exp.x, exp.y, exp.radius, 0, Math.PI * 2);
-                ctx.stroke();
-                
-                ctx.fillStyle = exp.color;
-                ctx.globalAlpha = exp.alpha * 0.18;
-                ctx.beginPath();
-                ctx.arc(exp.x, exp.y, exp.radius * 0.65, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
+                ctx.save(); ctx.globalAlpha = exp.alpha; ctx.strokeStyle = exp.color; ctx.lineWidth = 3.5;
+                ctx.beginPath(); ctx.arc(exp.x, exp.y, exp.radius, 0, Math.PI * 2); ctx.stroke();
+                ctx.fillStyle = exp.color; ctx.globalAlpha = exp.alpha * 0.18;
+                ctx.beginPath(); ctx.arc(exp.x, exp.y, exp.radius * 0.65, 0, Math.PI * 2); ctx.fill(); ctx.restore();
             });
 
-            // Render Partikel
             particles.forEach(p => {
-                ctx.save();
-                ctx.globalAlpha = p.alpha;
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
+                ctx.save(); ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill(); ctx.restore();
             });
 
             ctx.restore(); 
-
             requestAnimationFrame(update);
         }
 
-        // --- SISTEM SLOW-MOTION DEATH & STATE GAME ---
         function triggerSlowMotionDeath() {
-            timeScale = 0.15; 
-            triggerScreenShake(30);
-            
-            setTimeout(() => {
-                timeScale = 1.0; 
-                gameOver();
-            }, 1500);
+            timeScale = 0.15; triggerScreenShake(30);
+            setTimeout(() => { timeScale = 1.0; gameOver(); }, 1500);
         }
 
         function resetGame() {
-            score = 0;
-            hp = 100;
-            comboCount = 0;
-            comboTimer = 0;
-            shakeIntensity = 0;
-            timeScale = 1.0;
-            playerX = GAME_WIDTH / 2;
-            playerY = GAME_HEIGHT - 80;
-            bullets = [];
-            enemies = [];
-            particles = [];
-            explosions = [];
-            powerups = [];
-            laserShards = []; // Reset peluru shards pelacak
-            boss = null;
-            isBossFight = false;
-            nextBossScoreThreshold = 50;
-            activePowerUp = null;
-            powerupTimer = 0;
-            enemySpawnTimer = 0;
-            shootTimer = 0;
-            isTouching = false;
-            laserCharge = 0;
-            isLaserActive = false;
-            shardSpawnTimer = 0;
+            score = 0; hp = 100; comboCount = 0; comboTimer = 0; shakeIntensity = 0; timeScale = 1.0;
+            playerX = GAME_WIDTH / 2; playerY = GAME_HEIGHT - 80;
+            bullets = []; enemies = []; enemyBullets = []; laserShards = []; powerups = [];
+            boss = null; isBossFight = false; nextBossScoreThreshold = 50;
+            activePowerUp = null; powerupTimer = 0; enemySpawnTimer = 0; shootTimer = 0;
+            isTouching = false; laserCharge = 0; isLaserActive = false; shardSpawnTimer = 0;
 
-            uiScore.innerText = score;
-            uiHp.innerText = "100%";
-            uiHp.className = "text-2xl font-black text-cyan-400";
-            uiCombo.classList.add('opacity-0');
-            uiPowerup.classList.add('hidden');
-            laserProgress.style.width = '0%';
+            uiScore.innerText = score; uiHp.innerText = "100%"; uiHp.className = "text-2xl font-black text-cyan-400";
+            uiCombo.classList.add('opacity-0'); uiPowerup.classList.add('hidden'); laserProgress.style.width = '0%';
         }
 
         function startGame() {
-            resetGame();
-            isPlaying = true;
-            isPaused = false;
+            resetGame(); isPlaying = true; isPaused = false;
             screenOverlay.classList.add('opacity-0', 'pointer-events-none');
-            btnPause.classList.remove('hidden');
-            btnPause.classList.add('flex');
-            btnLaser.classList.remove('hidden');
-            btnLaser.classList.add('flex');
+            btnPause.classList.remove('hidden'); btnPause.classList.add('flex');
+            btnLaser.classList.remove('hidden'); btnLaser.classList.add('flex');
         }
 
         function gameOver() {
@@ -1203,46 +1012,27 @@
             overlayTitle.className = "text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-500 tracking-wider uppercase text-center mb-2";
             overlayDesc.innerHTML = `Pertahanan pangkalan utama hancur!<br>Skor Akhirmu: <strong class="text-white text-lg">${score}</strong>`;
             btnAction.innerText = "Mulai Ulang Pertempuran";
-            btnPause.classList.add('hidden');
-            btnLaser.classList.add('hidden');
+            btnPause.classList.add('hidden'); btnLaser.classList.add('hidden');
         }
 
         function togglePause() {
             if (!isPlaying) return;
             isPaused = !isPaused;
             if (isPaused) {
-                btnPause.innerHTML = `
-                    <svg class="w-5 h-5 text-emerald-400" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                    </svg>
-                `;
+                btnPause.innerHTML = `<svg class="w-5 h-5 text-emerald-400" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>`;
                 screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
                 overlayTitle.innerText = "TRANSMISI DIHENTIKAN";
                 overlayTitle.className = "text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-amber-500 tracking-wider uppercase text-center mb-2";
                 overlayDesc.innerText = "Sinyal taktis terputus sementara.";
                 btnAction.innerText = "Hubungkan Kembali";
             } else {
-                btnPause.innerHTML = `
-                    <svg class="w-5 h-5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                `;
+                btnPause.innerHTML = `<svg class="w-5 h-5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`;
                 screenOverlay.classList.add('opacity-0', 'pointer-events-none');
             }
         }
 
-        btnAction.addEventListener('click', () => {
-            if (isPaused) {
-                togglePause();
-            } else {
-                startGame();
-            }
-        });
-
-        btnPause.addEventListener('click', (e) => {
-            e.stopPropagation();
-            togglePause();
-        });
+        btnAction.addEventListener('click', () => { if (isPaused) togglePause(); else startGame(); });
+        btnPause.addEventListener('click', (e) => { e.stopPropagation(); togglePause(); });
 
         requestAnimationFrame(update);
     </script>
